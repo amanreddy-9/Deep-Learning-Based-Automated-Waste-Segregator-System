@@ -1,0 +1,105 @@
+import RPi.GPIO as GPIO
+import time
+import pigpio
+import cv2
+import torch
+import numpy as np
+from torchvision import transforms
+from PIL import Image
+
+# Pin Configuration
+IR_SENSOR_PIN = 17  # IR sensor
+SERVO_PIN = 18  # GPIO 18 for hardware PWM
+
+# GPIO Setup
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(IR_SENSOR_PIN, GPIO.IN)  # IR sensor input
+
+# Use pigpio for hardware PWM
+pi = pigpio.pi()
+
+# Load the trained PyTorch model
+model_path = "/home/team15/Downloads/bio.pt" 
+model = torch.load(model_path, map_location=torch.device('cpu'), weights_only=False)
+
+
+# Define image preprocessing (should match the training process)
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+])
+
+# Function to move the servo
+def move_servo(angle):
+    """Move the servo to a specified angle"""
+    pulse_width = 500 + (angle / 180) * 2000
+    pi.set_servo_pulsewidth(SERVO_PIN, pulse_width)
+    time.sleep(1)  # Allow servo to reach position
+
+# Function to capture an image using a webcam
+def capture_image():
+    cap = cv2.VideoCapture(0)  # Open default webcam (USB Camera)
+    if not cap.isOpened():
+        print("Error: Could not open webcam.")
+        return None
+
+    ret, frame = cap.read()  # Capture frame
+    cap.release()  # Release the webcam
+
+    if not ret:
+        print("Error: Failed to capture image.")
+        return None
+
+    image_path = "/home/pi/waste_image.jpg"  # Save image temporarily
+    cv2.imwrite(image_path, frame)
+    return image_path
+
+# Function to preprocess the image for classification
+def preprocess_image(image_path):
+    image = Image.open(image_path).convert("RGB")
+    image = transform(image)  # Apply transformations
+    image = image.unsqueeze(0)  # Add batch dimension
+    return image
+
+try:
+    while True:
+        if GPIO.input(IR_SENSOR_PIN) == 0:  # Object detected
+            print("Waste detected! Capturing image...")
+
+            # Capture and preprocess image
+            image_path = capture_image()
+            if image_path is None:
+                continue  # Skip iteration if image capture fails
+            
+            processed_image = preprocess_image(image_path)
+
+            # Predict waste type using PyTorch model
+            with torch.no_grad():
+                output = model(processed_image)
+                predicted_class = torch.argmax(output, dim=1).item()
+
+            # Map prediction to waste type
+            label = "Biodegradable" if predicted_class == 0 else "Non-Biodegradable"
+            print(f"Classification: {label}")
+
+            # Move the servo based on classification
+            if label == "Biodegradable":
+                print("Biodegradable detected! Moving servo left.")
+                move_servo(60)  # Move left
+            else:
+                print("Non-Biodegradable detected! Moving servo right.")
+                move_servo(120)  # Move right
+
+            time.sleep(2)  # Wait before resetting position
+
+            print("Returning to original position.")
+            move_servo(90)  # Return to neutral position
+
+        time.sleep(0.05)  # Small delay
+
+except KeyboardInterrupt:
+    print("Process stopped by user.")
+    pi.set_servo_pulsewidth(SERVO_PIN, 0)  # Stop servo
+    pi.stop()
+    GPIO.cleanup()
