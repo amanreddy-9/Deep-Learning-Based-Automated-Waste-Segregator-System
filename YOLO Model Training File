@@ -1,0 +1,27 @@
+# train_robotics_classifier.py
+
+from ultralytics import YOLO
+
+def robotics_train():
+    print("🔧 Loading YOLOv8 classification model...")
+    model = YOLO("yolov8n-cls.pt")  # Load pretrained classification model
+    print("✅ Model loaded successfully.")
+
+    # Start training
+    model.train(
+        data="C:/Users/AMAN REDDY/Downloads/Robotics/New/Dataset",  # Path to your dataset
+        epochs=50,
+        imgsz=224,   # Standard size for classification
+        batch=16,
+        name="robotics_classifier_v1"  # Custom run name
+    )
+
+    # Validate the model after training
+    model.val()
+
+    # Export model to ONNX format with custom name
+    model.export(format="onnx", name="robotics_classifier_v1.onnx")
+    print("📦 Model exported as robotics_classifier_v1.onnx")
+
+if __name__ == "__main__":
+    robotics_train()
